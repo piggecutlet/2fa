@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>2FA</title>
+  </head>
+  <body>
+    <input type="text" id="s" value="ABCDEFGHIJKLMNOP" />
+    <div id="t"></div>
+    <div id="r"></div>
+    <button id="c">コピー</button>
+    <div id="f" style="display: none">クリップボードにコピーしました。</div>
+
+    <script type="module">
+      const TOTPUtils = {
+        base32ToBuf: (base32) => {
+          const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+          let bits = 0,
+            value = 0,
+            index = 0;
+          const output = new Uint8Array(Math.floor((base32.length * 5) / 8));
+          for (let i = 0; i < base32.length; i++) {
+            const charIndex = alphabet.indexOf(base32[i].toUpperCase());
+            if (charIndex === -1) continue;
+            value = (value << 5) | charIndex;
+            bits += 5;
+            if (bits >= 8) {
+              output[index++] = (value >> (bits - 8)) & 255;
+              bits -= 8;
+            }
+          }
+          return output;
+        },
+        generate: async (secretStr) => {
+          try {
+            if (!secretStr) return "------";
+            const cleanSecret = secretStr.replace(/\s/g, "").toUpperCase();
+            const secret = TOTPUtils.base32ToBuf(cleanSecret);
+            const epoch = Math.floor(Date.now() / 1000);
+            let timeStep = Math.floor(epoch / 30);
+            const msg = new Uint8Array(8);
+            for (let i = 7; i >= 0; i--) {
+              msg[i] = timeStep & 0xff;
+              timeStep = Math.floor(timeStep / 256);
+            }
+            const key = await window.crypto.subtle.importKey(
+              "raw",
+              secret,
+              { name: "HMAC", hash: "SHA-1" },
+              false,
+              ["sign"],
+            );
+            const signature = await window.crypto.subtle.sign("HMAC", key, msg);
+            const hmac = new Uint8Array(signature);
+            const offset = hmac[hmac.length - 1] & 0x0f;
+            const code =
+              ((hmac[offset] & 0x7f) << 24) |
+              ((hmac[offset + 1] & 0xff) << 16) |
+              ((hmac[offset + 2] & 0xff) << 8) |
+              (hmac[offset + 3] & 0xff);
+            return (code % 1000000).toString().padStart(6, "0");
+          } catch (e) {
+            return "ERROR";
+          }
+        },
+      };
+
+      const sInput = document.getElementById("s");
+      const tDiv = document.getElementById("t");
+      const rDiv = document.getElementById("r");
+      const cBtn = document.getElementById("c");
+      const fDiv = document.getElementById("f");
+
+      const update = async () => {
+        const token = await TOTPUtils.generate(sInput.value);
+        tDiv.textContent = token;
+        rDiv.textContent =
+          "残り: " + (30 - (Math.floor(Date.now() / 1000) % 30)) + "秒";
+      };
+
+      cBtn.onclick = () => {
+        const el = document.createElement("textarea");
+        el.value = tDiv.textContent;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+        fDiv.style.display = "block";
+        setTimeout(() => (fDiv.style.display = "none"), 2000);
+      };
+
+      sInput.oninput = update;
+      setInterval(update, 1000);
+      update();
+    </script>
+  </body>
+</html>
